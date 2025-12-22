@@ -7,9 +7,9 @@ from datetime import datetime, timedelta
 # --- 1. 網頁設定 ---
 st.set_page_config(page_title="ELN 結構型商品分析", layout="wide")
 st.title("🏦 ELN 結構型商品 - 互動式分析儀表板")
-st.markdown("輸入參數並按下 **「開始計算」**，即可生成分析報告。")
+st.markdown("輸入代號並按下 **「開始計算」**，系統將自動抓取最新價格作為期初價格 (Ref Price)。")
 
-# --- 2. 側邊欄：表單輸入 (按鈕才送出) ---
+# --- 2. 側邊欄：表單輸入 ---
 with st.sidebar.form(key='eln_form'):
     st.header("參數設定")
     
@@ -17,8 +17,10 @@ with st.sidebar.form(key='eln_form'):
     ticker_input = st.text_input("股票代號 (美股代號/台股+TW)", "NVDA")
     
     st.markdown("---")
-    # 期初價格 (改為手動輸入，無預設自動抓取功能)
-    ref_price_input = st.number_input("期初價格 (Ref Price)", min_value=0.0, value=0.0, step=0.1, format="%.2f")
+    # 期初價格 (預設為 0 = 自動抓最新價)
+    st.write("期初價格 (Ref Price)")
+    st.caption("👇 維持 0 則自動抓取最新收盤價")
+    ref_price_input = st.number_input("輸入指定價格 (選填)", min_value=0.0, value=0.0, step=0.1, format="%.2f")
     
     st.markdown("---")
     st.write("結構條件 (%)")
@@ -29,17 +31,12 @@ with st.sidebar.form(key='eln_form'):
     # 提交按鈕
     submit_button = st.form_submit_button(label='🚀 開始計算')
 
-# --- 3. 核心邏輯 (只有按了按鈕才會執行) ---
+# --- 3. 核心邏輯 ---
 if submit_button:
-    # 檢查使用者是否輸入了期初價格
-    if ref_price_input <= 0:
-        st.warning("⚠️ 請輸入有效的「期初價格 (Ref Price)」才能開始計算。")
-        st.stop()
-
     ticker = ticker_input.upper().strip()
     
     try:
-        with st.spinner(f"正在抓取 {ticker} 資料並計算中..."):
+        with st.spinner(f"正在連線 Yahoo Finance 抓取 {ticker} 最新資料..."):
             # 抓取資料 (抓 800 天以計算年線)
             end_date = datetime.now()
             start_date = end_date - timedelta(days=800)
@@ -74,8 +71,13 @@ if submit_button:
             current_price = float(df['Close'].iloc[-1])
             current_date = df.index[-1].strftime('%Y-%m-%d')
             
-            # 使用使用者輸入的 Ref Price
-            ref_price = ref_price_input
+            # --- 關鍵邏輯：決定 Ref Price ---
+            if ref_price_input == 0:
+                ref_price = current_price
+                ref_msg = "(最新收盤價)"
+            else:
+                ref_price = ref_price_input
+                ref_msg = "(手動指定)"
             
             # 計算結構點位
             ko_price = ref_price * (ko_pct / 100)
@@ -92,9 +94,9 @@ if submit_button:
             
             col1, col2, col3, col4 = st.columns(4)
             
-            # 計算現價與 Ref 的距離
+            # 顯示現價 (如果是自動抓取，這裡的差距會是 0%)
             dist_ref = (current_price - ref_price) / ref_price * 100
-            col1.metric("標的現價", f"${current_price:.2f}", f"{dist_ref:+.2f}% (vs Ref)")
+            col1.metric("標的現價", f"${current_price:.2f}", f"Ref: ${ref_price:.2f} {ref_msg}")
             
             col2.metric("KO 價格", f"${ko_price:.2f}", f"{ko_pct}%")
             col3.metric("Strike 價格", f"${strike_price:.2f}", f"{strike_pct}%")
@@ -160,5 +162,4 @@ if submit_button:
         st.error(f"發生錯誤: {e}")
 
 else:
-    # 尚未按下按鈕時的提示畫面
-    st.info("👈 請在左側輸入參數，並按下 **「開始計算」** 按鈕來生成報告。")
+    st.info("👈 請輸入代號並按 **「🚀 開始計算」**，系統將自動以最新價格作為 Ref Price。")
