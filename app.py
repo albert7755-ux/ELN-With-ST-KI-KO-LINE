@@ -6,27 +6,23 @@ import numpy as np
 from datetime import datetime, timedelta
 
 # --- 1. 基礎設定 ---
-st.set_page_config(page_title="結構型商品戰情室 (V8.0)", layout="wide")
-st.title("📊 結構型商品 - 歷史回測與風險防禦分析")
-st.markdown("""
-結合 **視覺化圖表** 與 **深度風險數據**：
-1. **防禦力**：計算歷史上「不接股票」的安全機率。
-2. **恢復力**：計算萬一接到股票，平均需要等待 **幾天** 才能解套 (回到 Strike)。
-3. **可視化**：透過滾動 Bar 圖，一眼看出歷史上的風險分布。
-""")
+st.set_page_config(page_title="結構型商品戰情室 (V9.2)", layout="wide")
+st.title("📊 結構型商品 - 關鍵點位與風險回測")
+st.markdown("依據您的需求，調整預設參數與閱讀動線：**「價位 -> 走勢 -> 解讀 -> 回測」**。")
 st.divider()
 
 # --- 2. 側邊欄：參數設定 ---
 st.sidebar.header("1️⃣ 輸入標的")
-default_tickers = "NVDA, TSLA, 2330.TW"
+default_tickers = "TSLA, NVDA, GOOG"
 tickers_input = st.sidebar.text_area("股票代碼 (逗號分隔)", value=default_tickers, height=80)
 
 st.sidebar.divider()
 st.sidebar.header("2️⃣ 結構條件 (%)")
 st.sidebar.info("以該期「進場價」為 100% 基準：")
-ko_pct = st.sidebar.number_input("KO (敲出價 %)", value=103.0, step=0.5, format="%.1f")
-strike_pct = st.sidebar.number_input("Strike (執行價 %)", value=100.0, step=1.0, format="%.1f")
-ki_pct = st.sidebar.number_input("KI (敲入價 %)", value=65.0, step=1.0, format="%.1f")
+
+ko_pct = st.sidebar.number_input("KO (敲出價 %)", value=100.0, step=0.5, format="%.1f")
+strike_pct = st.sidebar.number_input("Strike (轉換/執行價 %)", value=80.0, step=1.0, format="%.1f")
+ki_pct = st.sidebar.number_input("KI (下檔保護價 %)", value=65.0, step=1.0, format="%.1f")
 
 st.sidebar.divider()
 st.sidebar.header("3️⃣ 回測參數設定")
@@ -62,45 +58,36 @@ def get_stock_data_10y(ticker):
         return None, str(e)
 
 def run_comprehensive_backtest(df, ki_pct, strike_pct, months):
-    """
-    綜合回測：同時計算「回本天數」與準備「Bar圖資料」
-    """
+    """綜合回測邏輯"""
     trading_days = int(months * 21)
-    
-    # 建立回測資料
     bt = df[['Date', 'Close']].copy()
     bt.columns = ['Start_Date', 'Start_Price']
     
-    # 1. 計算週期結束資訊
     bt['End_Date'] = bt['Start_Date'].shift(-trading_days)
     bt['Final_Price'] = bt['Start_Price'].shift(-trading_days)
     
-    # 2. 期間最低價
     indexer = pd.api.indexers.FixedForwardWindowIndexer(window_size=trading_days)
     bt['Min_Price_During'] = bt['Start_Price'].rolling(window=indexer, min_periods=1).min()
     
-    bt = bt.dropna() # 移除未完成的週期
+    bt = bt.dropna()
     
     if bt.empty: return None, None
     
-    # 3. 計算關鍵價位
     bt['KI_Level'] = bt['Start_Price'] * (ki_pct / 100)
     bt['Strike_Level'] = bt['Start_Price'] * (strike_pct / 100)
     
-    # 4. 判定狀態
     bt['Touched_KI'] = bt['Min_Price_During'] < bt['KI_Level']
     bt['Below_Strike'] = bt['Final_Price'] < bt['Strike_Level']
     
-    # 結果判定
     conditions = [
-        (bt['Touched_KI'] == True) & (bt['Below_Strike'] == True), # 接股票
-        (bt['Touched_KI'] == True) & (bt['Below_Strike'] == False),# 驚險過關
-        (bt['Touched_KI'] == False) # 安全
+        (bt['Touched_KI'] == True) & (bt['Below_Strike'] == True),
+        (bt['Touched_KI'] == True) & (bt['Below_Strike'] == False),
+        (bt['Touched_KI'] == False)
     ]
     choices = ['Loss', 'Safe', 'Safe']
     bt['Result_Type'] = np.select(conditions, choices, default='Unknown')
     
-    # --- A. 計算回本天數 (Recovery Days) ---
+    # 計算回本天數
     loss_indices = bt[bt['Result_Type'] == 'Loss'].index
     recovery_counts = [] 
     stuck_count = 0
@@ -109,35 +96,28 @@ def run_comprehensive_backtest(df, ki_pct, strike_pct, months):
         row = bt.loc[idx]
         target_price = row['Strike_Level']
         end_date = row['End_Date']
-        
-        # 往未來找解套日
         future_data = df[(df['Date'] > end_date) & (df['Close'] >= target_price)]
         
         if not future_data.empty:
             days_needed = (future_data.iloc[0]['Date'] - end_date).days
             recovery_counts.append(days_needed)
         else:
-            stuck_count += 1 # 至今未解套
+            stuck_count += 1
 
-    # --- B. 準備 Bar 圖資料 ---
+    # Bar圖資料
     def calculate_bar_value(row):
         gap = ((row['Final_Price'] - row['Strike_Level']) / row['Strike_Level']) * 100
-        if row['Result_Type'] == 'Loss':
-            return gap # 負值，顯示虧損幅度
-        else:
-            return max(0, gap) # 正值，顯示安全距離
+        return gap if row['Result_Type'] == 'Loss' else max(0, gap)
 
     bt['Bar_Value'] = bt.apply(calculate_bar_value, axis=1)
     bt['Color'] = np.where(bt['Result_Type'] == 'Loss', 'red', 'green')
 
-    # --- C. 統計指標 ---
+    # 統計
     total = len(bt)
     safe_count = len(bt[bt['Result_Type'] == 'Safe'])
     safety_prob = (safe_count / total) * 100
-    
     pos_count = len(bt[bt['Final_Price'] > bt['Start_Price']])
     pos_prob = (pos_count / total) * 100
-    
     avg_recovery = np.mean(recovery_counts) if recovery_counts else 0
     
     stats = {
@@ -145,14 +125,13 @@ def run_comprehensive_backtest(df, ki_pct, strike_pct, months):
         'positive_prob': pos_prob,
         'loss_count': len(loss_indices),
         'avg_recovery': avg_recovery,
-        'stuck_count': stuck_count,
-        'total_samples': total
+        'stuck_count': stuck_count
     }
     
     return bt, stats
 
 def plot_integrated_chart(df, ticker, current_price, p_ko, p_ki, p_st):
-    """主圖：股價 + 均線 + 關鍵位"""
+    """主圖：走勢 + 關鍵價位"""
     plot_df = df.tail(500).copy()
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['Close'], mode='lines', name='股價', line=dict(color='black', width=1.5)))
@@ -160,41 +139,29 @@ def plot_integrated_chart(df, ticker, current_price, p_ko, p_ki, p_st):
     fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA60'], mode='lines', name='季線', line=dict(color='#f1c40f', width=1)))
     fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA240'], mode='lines', name='年線', line=dict(color='#9b59b6', width=1)))
 
+    # KO
     fig.add_hline(y=p_ko, line_dash="dash", line_color="red", line_width=2)
     fig.add_annotation(x=1, y=p_ko, xref="paper", yref="y", text=f"KO: {p_ko:.2f}", showarrow=False, xanchor="left", font=dict(color="red"))
-
+    # Strike
     fig.add_hline(y=p_st, line_dash="solid", line_color="green", line_width=2)
     fig.add_annotation(x=1, y=p_st, xref="paper", yref="y", text=f"Strike: {p_st:.2f}", showarrow=False, xanchor="left", font=dict(color="green"))
-
+    # KI
     fig.add_hline(y=p_ki, line_dash="dot", line_color="orange", line_width=2)
     fig.add_annotation(x=1, y=p_ki, xref="paper", yref="y", text=f"KI: {p_ki:.2f}", showarrow=False, xanchor="left", font=dict(color="orange"))
 
     all_prices = [p_ko, p_ki, p_st, plot_df['Close'].max(), plot_df['Close'].min()]
     y_min, y_max = min(all_prices)*0.9, max(all_prices)*1.05
 
-    fig.update_layout(title=f"{ticker} - 走勢與關鍵價位", height=450, margin=dict(r=80), xaxis_title="日期", yaxis_title="價格", yaxis_range=[y_min, y_max], hovermode="x unified", legend=dict(orientation="h", y=1.02, x=0))
+    fig.update_layout(title=f"{ticker} - 走勢與關鍵價位 (近2年)", height=450, margin=dict(r=80), xaxis_title="日期", yaxis_title="價格", yaxis_range=[y_min, y_max], hovermode="x unified", legend=dict(orientation="h", y=1.02, x=0))
     return fig
 
 def plot_rolling_bar_chart(bt_data, ticker):
-    """Bar 圖：顯示回測結果"""
+    """Bar 圖：回測結果"""
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=bt_data['Start_Date'],
-        y=bt_data['Bar_Value'],
-        marker_color=bt_data['Color'],
-        name='期末表現'
-    ))
+    fig.add_trace(go.Bar(x=bt_data['Start_Date'], y=bt_data['Bar_Value'], marker_color=bt_data['Color'], name='期末表現'))
     fig.add_hline(y=0, line_width=1, line_color="black")
     
-    fig.update_layout(
-        title=f"{ticker} - 滾動回測損益分佈 (過去10年)",
-        xaxis_title="進場日期",
-        yaxis_title="期末距離 Strike 幅度 (%)",
-        height=350,
-        margin=dict(l=20, r=20, t=40, b=20),
-        showlegend=False,
-        hovermode="x unified"
-    )
+    fig.update_layout(title=f"{ticker} - 滾動回測損益分佈 (過去10年)", xaxis_title="進場日期", yaxis_title="期末距離 Strike (%)", height=350, margin=dict(l=20, r=20, t=40, b=20), showlegend=False, hovermode="x unified")
     return fig
 
 # --- 4. 執行邏輯 ---
@@ -230,50 +197,48 @@ if run_btn:
                 st.warning("資料不足")
                 continue
 
-            # --- 第一區：價格與關鍵指標 ---
+            # ==========================================
+            # 1. 四大重點指標 (價位)
+            # ==========================================
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("最新收盤價", f"{current_price:.2f}")
-            c2.metric("KI 價格 (敲入)", f"{p_ki:.2f}")
-            
-            # 安全機率
-            safe_prob = stats['safety_prob']
-            safe_color = "normal" if safe_prob > 80 else "inverse"
-            c3.metric("不接股票機率 (安全)", f"{safe_prob:.1f}%", delta_color=safe_color)
-            
-            # 回本天數
-            avg_days = stats['avg_recovery']
-            if stats['loss_count'] > 0:
-                c4.metric("若接股 平均回本天數", f"{avg_days:.0f} 天")
-            else:
-                c4.metric("若接股 平均回本天數", "無接股紀錄")
+            c1.metric("最新股價", f"{current_price:.2f}")
+            c2.metric(f"KO ({ko_pct}%)", f"{p_ko:.2f}", help="若股價高於此，提前獲利出場")
+            c3.metric(f"KI ({ki_pct}%)", f"{p_ki:.2f}", help="若股價跌破此，保護消失", delta_color="inverse")
+            c4.metric(f"Strike ({strike_pct}%)", f"{p_st:.2f}", help="期初價格或接股成本")
 
-            # --- 第二區：淺藍色底框 (重點解釋區) ---
-            # 這是您最喜歡的 V6 解釋風格
-            loss_pct = 100 - safe_prob
+            # ==========================================
+            # 2. 走勢及關鍵價位圖 (主圖)
+            # ==========================================
+            fig_main = plot_integrated_chart(df, ticker, current_price, p_ko, p_ki, p_st)
+            st.plotly_chart(fig_main, use_container_width=True)
+
+            # ==========================================
+            # 3. 藍底解釋 (AI 解讀)
+            # ==========================================
+            loss_pct = 100 - stats['safety_prob']
             stuck_rate = 0
             if stats['loss_count'] > 0:
                 stuck_rate = (stats['stuck_count'] / stats['loss_count']) * 100
-            
+            avg_days = stats['avg_recovery']
+
             st.info(f"""
             **📊 歷史回測洞察報告 (過去 10 年，每 {period_months} 個月一期)：**
             
             1.  **安全性分析 (不被換到股票的機率)**：
-                在過去 10 年任意時間點進場，有 **{safe_prob:.1f}%** 的機率可以安全拿回本金 (未跌破 KI 或 跌破後漲回)。
+                在過去 10 年任意時間點進場，有 **{stats['safety_prob']:.1f}%** 的機率可以安全拿回本金 (未跌破 KI 或 跌破後漲回)。
                 
             2.  **獲利潛力 (正報酬機率)**：
                 若不考慮配息，單純看股價，持有期滿後股價上漲的機率為 **{stats['positive_prob']:.1f}%**。
                 
-            3.  **恢復力分析 (解套時間)**：
+            3.  **恢復力分析 (回到 Strike 的時間)**：
                 若不幸發生接股票的情況 (機率約 {loss_pct:.1f}%)，根據歷史經驗，**平均等待 {avg_days:.0f} 天** 股價即會漲回 Strike 價格。
                 *(註：在所有接股票的案例中，約有 {stuck_rate:.1f}% 的情況截至目前尚未解套)*
             """)
 
-            # --- 第三區：整合走勢圖 ---
-            fig_main = plot_integrated_chart(df, ticker, current_price, p_ko, p_ki, p_st)
-            st.plotly_chart(fig_main, use_container_width=True)
-            
-            # --- 第四區：滾動回測 Bar 圖 ---
-            st.subheader("📉 歷史滾動回測結果 (Rolling Backtest)")
+            # ==========================================
+            # 4. 回測圖 (Bar Chart)
+            # ==========================================
+            st.subheader("📉 歷史滾動回測結果")
             st.caption("🟩 **綠色**：安全 (拿回本金) ｜ 🟥 **紅色**：接股票 (虧損幅度)")
             fig_bar = plot_rolling_bar_chart(bt_data, ticker)
             st.plotly_chart(fig_bar, use_container_width=True)
@@ -282,3 +247,28 @@ if run_btn:
 
 else:
     st.info("👈 請在左側設定參數，按下「開始分析」。")
+
+# ==========================================
+# 5. 底部警語 (Risk Disclaimer)
+# ==========================================
+st.markdown("""
+<style>
+.disclaimer-box {
+    background-color: #fff3f3;
+    border: 1px solid #e0b4b4;
+    padding: 15px;
+    border-radius: 5px;
+    color: #8a1f1f;
+    font-size: 0.9em;
+    margin-top: 30px;
+}
+</style>
+<div class='disclaimer-box'>
+    <strong>⚠️ 免責聲明與投資風險預告</strong><br>
+    1. <strong>本工具僅供教學與模擬試算</strong>：本系統計算之數據、圖表與機率僅供參考，不代表任何形式之投資建議，亦不保證未來獲利。<br>
+    2. <strong>歷史不代表未來</strong>：所有回測數據皆基於過去 10 年歷史股價進行模擬，過去的市場表現不保證未來的走勢。<br>
+    3. <strong>非保本商品</strong>：結構型商品 (ELN/FCN) 為非保本型投資，最大風險為股價下跌導致本金全數虧損 (需承接價值減損之股票)。<br>
+    4. <strong>實際條款為準</strong>：實際商品之觀察日、配息率、提前出場 (KO) 及敲入 (KI) 判定方式，請以發行機構之公開說明書及合約為準。<br>
+    5. <strong>資料來源</strong>：股價資料來源為 Yahoo Finance 公開數據，可能存在延遲或誤差，本系統不保證資料之即時性與正確性。
+</div>
+""", unsafe_allow_html=True)
