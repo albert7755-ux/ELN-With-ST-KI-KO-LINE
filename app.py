@@ -6,9 +6,9 @@ import numpy as np
 from datetime import datetime, timedelta
 
 # --- 1. 基礎設定 ---
-st.set_page_config(page_title="結構型商品戰情室 (V9.2)", layout="wide")
-st.title("📊 結構型商品 - 關鍵點位與風險回測")
-st.markdown("依據您的需求，調整預設參數與閱讀動線：**「價位 -> 走勢 -> 解讀 -> 回測」**。")
+st.set_page_config(page_title="結構型商品戰情室 (V10.0)", layout="wide")
+st.title("📊 結構型商品 - 關鍵點位與長週期風險回測")
+st.markdown("依據您的需求，回測區間已擴大為 **「2009/01/01 至今」**，涵蓋更多景氣循環。")
 st.divider()
 
 # --- 2. 側邊欄：參數設定 ---
@@ -32,10 +32,16 @@ run_btn = st.sidebar.button("🚀 開始分析", type="primary")
 
 # --- 3. 核心函數 ---
 
-def get_stock_data_10y(ticker):
+def get_stock_data_from_2009(ticker):
+    """
+    【修改】下載從 2009-01-01 至今的資料
+    """
     try:
-        df = yf.download(ticker, period="10y", progress=False)
-        if df.empty: return None, f"找不到 {ticker}"
+        # 指定開始日期
+        start_date = "2009-01-01"
+        df = yf.download(ticker, start=start_date, progress=False)
+        
+        if df.empty: return None, f"找不到 {ticker} 或該期間無資料"
         
         df = df.reset_index()
         if isinstance(df.columns, pd.MultiIndex):
@@ -131,8 +137,8 @@ def run_comprehensive_backtest(df, ki_pct, strike_pct, months):
     return bt, stats
 
 def plot_integrated_chart(df, ticker, current_price, p_ko, p_ki, p_st):
-    """主圖：走勢 + 關鍵價位"""
-    plot_df = df.tail(500).copy()
+    """主圖：走勢 + 關鍵價位 (顯示近3年以保持清晰)"""
+    plot_df = df.tail(750).copy() # 改為顯示約3年，配合長週期回測的語境
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['Close'], mode='lines', name='股價', line=dict(color='black', width=1.5)))
     fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], mode='lines', name='月線', line=dict(color='#3498db', width=1)))
@@ -152,7 +158,7 @@ def plot_integrated_chart(df, ticker, current_price, p_ko, p_ki, p_st):
     all_prices = [p_ko, p_ki, p_st, plot_df['Close'].max(), plot_df['Close'].min()]
     y_min, y_max = min(all_prices)*0.9, max(all_prices)*1.05
 
-    fig.update_layout(title=f"{ticker} - 走勢與關鍵價位 (近2年)", height=450, margin=dict(r=80), xaxis_title="日期", yaxis_title="價格", yaxis_range=[y_min, y_max], hovermode="x unified", legend=dict(orientation="h", y=1.02, x=0))
+    fig.update_layout(title=f"{ticker} - 走勢與關鍵價位 (顯示近3年)", height=450, margin=dict(r=80), xaxis_title="日期", yaxis_title="價格", yaxis_range=[y_min, y_max], hovermode="x unified", legend=dict(orientation="h", y=1.02, x=0))
     return fig
 
 def plot_rolling_bar_chart(bt_data, ticker):
@@ -161,7 +167,7 @@ def plot_rolling_bar_chart(bt_data, ticker):
     fig.add_trace(go.Bar(x=bt_data['Start_Date'], y=bt_data['Bar_Value'], marker_color=bt_data['Color'], name='期末表現'))
     fig.add_hline(y=0, line_width=1, line_color="black")
     
-    fig.update_layout(title=f"{ticker} - 滾動回測損益分佈 (過去10年)", xaxis_title="進場日期", yaxis_title="期末距離 Strike (%)", height=350, margin=dict(l=20, r=20, t=40, b=20), showlegend=False, hovermode="x unified")
+    fig.update_layout(title=f"{ticker} - 滾動回測損益分佈 (2009至今)", xaxis_title="進場日期", yaxis_title="期末距離 Strike (%)", height=350, margin=dict(l=20, r=20, t=40, b=20), showlegend=False, hovermode="x unified")
     return fig
 
 # --- 4. 執行邏輯 ---
@@ -175,8 +181,9 @@ if run_btn:
         for ticker in ticker_list:
             st.markdown(f"### 📌 標的：{ticker}")
             
-            with st.spinner(f"正在分析 {ticker} ..."):
-                df, err = get_stock_data_10y(ticker)
+            with st.spinner(f"正在分析 {ticker} (2009-Now) ..."):
+                # 【修改】呼叫新函數
+                df, err = get_stock_data_from_2009(ticker)
             
             if err:
                 st.error(f"{ticker} 讀取失敗: {err}")
@@ -222,10 +229,10 @@ if run_btn:
             avg_days = stats['avg_recovery']
 
             st.info(f"""
-            **📊 歷史回測洞察報告 (過去 10 年，每 {period_months} 個月一期)：**
+            **📊 長週期回測報告 (2009/01/01 至今，每 {period_months} 個月一期)：**
             
             1.  **安全性分析 (不被換到股票的機率)**：
-                在過去 10 年任意時間點進場，有 **{stats['safety_prob']:.1f}%** 的機率可以安全拿回本金 (未跌破 KI 或 跌破後漲回)。
+                在過去 16 年任意時間點進場，有 **{stats['safety_prob']:.1f}%** 的機率可以安全拿回本金 (未跌破 KI 或 跌破後漲回)。
                 
             2.  **獲利潛力 (正報酬機率)**：
                 若不考慮配息，單純看股價，持有期滿後股價上漲的機率為 **{stats['positive_prob']:.1f}%**。
@@ -249,7 +256,7 @@ else:
     st.info("👈 請在左側設定參數，按下「開始分析」。")
 
 # ==========================================
-# 5. 底部警語 (Risk Disclaimer)
+# 5. 底部警語
 # ==========================================
 st.markdown("""
 <style>
@@ -266,7 +273,7 @@ st.markdown("""
 <div class='disclaimer-box'>
     <strong>⚠️ 免責聲明與投資風險預告</strong><br>
     1. <strong>本工具僅供教學與模擬試算</strong>：本系統計算之數據、圖表與機率僅供參考，不代表任何形式之投資建議，亦不保證未來獲利。<br>
-    2. <strong>歷史不代表未來</strong>：所有回測數據皆基於過去 10 年歷史股價進行模擬，過去的市場表現不保證未來的走勢。<br>
+    2. <strong>歷史不代表未來</strong>：回測數據基於 2009 年至今之歷史股價，過去的市場表現不保證未來的走勢。<br>
     3. <strong>非保本商品</strong>：結構型商品 (ELN/FCN) 為非保本型投資，最大風險為股價下跌導致本金全數虧損 (需承接價值減損之股票)。<br>
     4. <strong>實際條款為準</strong>：實際商品之觀察日、配息率、提前出場 (KO) 及敲入 (KI) 判定方式，請以發行機構之公開說明書及合約為準。<br>
     5. <strong>資料來源</strong>：股價資料來源為 Yahoo Finance 公開數據，可能存在延遲或誤差，本系統不保證資料之即時性與正確性。
