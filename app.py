@@ -1,212 +1,158 @@
 import streamlit as st
-import yfinance as yf
-import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+import numpy as np
+import pandas as pd
 
-# --- 1. 網頁設定 ---
-st.set_page_config(page_title="ELN 多標的結構分析", layout="wide")
-st.title("🏦 ELN 結構型商品 - 多標的分析儀表板 (Basket)")
-st.markdown("支援 **1~5 檔標的** (Worst-of)。輸入代號並按下 **「開始計算」**，系統將自動抓取最新價格並進行歸一化比較。")
+# --- 1. 基礎設定 ---
+st.set_page_config(page_title="結構型商品關鍵價位檢視", layout="wide")
+st.title("📉 結構型商品 - 關鍵價位三視圖 (KO / KI / ST)")
+st.markdown("此工具將標的物走勢分別與 KO、KI、ST 三個關鍵價位進行獨立比對，清晰呈現觸價風險。")
+st.divider()
 
-# --- 2. 側邊欄：參數設定 ---
-with st.sidebar.form(key='eln_form'):
-    st.header("1️⃣ 設定連結標的 (Basket)")
-    st.caption("請輸入 1~5 檔股票代號，用逗號隔開")
-    # 預設輸入範例
-    tickers_input = st.text_input("股票代號", "NVDA, TSLA, AMD")
+# --- 2. 側邊欄：參數設定與模擬資料 ---
+st.sidebar.header("⚙️ 參數設定")
+
+# 設定關鍵價位 (以百分比計)
+st_level = 100.0 # 期初價格設為基準 100
+ko_pct = st.sidebar.slider("KO 敲出價 (%)", min_value=101.0, max_value=120.0, value=105.0, step=0.5)
+ki_pct = st.sidebar.slider("KI 敲入價 (%)", min_value=50.0, max_value=99.0, value=70.0, step=1.0)
+
+# 計算實際數值
+ko_level = st_level * (ko_pct / 100)
+ki_level = st_level * (ki_pct / 100)
+
+st.sidebar.markdown("---")
+st.sidebar.write(f"**ST (執行價):** {st_level:.2f}")
+st.sidebar.write(f"**KO (敲出價):** {ko_level:.2f}")
+st.sidebar.write(f"**KI (敲入價):** {ki_level:.2f}")
+st.sidebar.markdown("---")
+
+# 模擬按鈕
+start_simulation = st.sidebar.button("🔄 重新模擬走勢", type="primary")
+
+# --- 3. 資料模擬函數 ---
+def simulate_path(start_price, days=252, volatility=0.2):
+    """
+    模擬一條幾何布朗運動的價格路徑 (僅供視覺化參考)
+    """
+    np.random.seed(int(pd.Timestamp.now().timestamp()) if start_simulation else 42)
+    dt = 1 / days
+    mu = 0.05 # 假設一個小的向上漂移項
+    sigma = volatility
     
-    st.markdown("---")
-    st.header("2️⃣ 結構條件 (%)")
-    st.caption("期初價格 (Ref) 預設為最新收盤價 (100%)")
+    # 生成隨機漫步
+    returns = np.random.normal(loc=(mu - 0.5 * sigma**2) * dt, scale=sigma * np.sqrt(dt), size=days)
+    price_path = start_price * (np.cumprod(np.exp(returns)))
     
-    col_ko, col_ki = st.columns(2)
-    with col_ko:
-        ko_pct = st.number_input("KO (出場)", value=100.0)
-        strike_pct = st.number_input("Strike (履約)", value=85.0)
-    with col_ki:
-        ki_pct = st.number_input("KI (防守)", value=60.0)
+    # 插入期初價格在第一天
+    price_path = np.insert(price_path, 0, start_price)
     
-    # 提交按鈕
-    submit_button = st.form_submit_button(label='🚀 開始計算')
-
-# --- 3. 核心邏輯 ---
-if submit_button:
-    # 1. 解析股票代號
-    tickers_raw = tickers_input.split(',')
-    tickers = [t.strip().upper() for t in tickers_raw if t.strip() != '']
+    # 為了演示效果，強制讓中間一段時間跌破 KI，最後又拉回
+    mid_point = int(days / 2)
+    end_point = int(days * 0.8)
     
-    # 限制最多 5 檔
-    if len(tickers) > 5:
-        st.warning("⚠️ 最多支援 5 檔標的，將只取前 5 檔進行計算。")
-        tickers = tickers[:5]
+    # 製造一個下跌波段觸及 KI
+    downward_shock = np.linspace(0, -1 * (start_price - ki_level) * 1.2, num=(end_point - mid_point))
+    price_path[mid_point:end_point] += downward_shock
     
-    if not tickers:
-        st.error("❌ 請至少輸入一檔股票代號。")
-        st.stop()
+    # 確保價格不為負
+    price_path = np.maximum(price_path, 1.0)
+    
+    days_axis = list(range(len(price_path)))
+    return pd.DataFrame({'Day': days_axis, 'Price': price_path})
 
-    try:
-        with st.spinner(f"正在分析 {len(tickers)} 檔標的: {', '.join(tickers)} ..."):
-            # 準備數據容器
-            basket_data = {}
-            summary_data = []
-            
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=800)
-            
-            # --- 迴圈抓取每一檔資料 ---
-            for t in tickers:
-                # 下載資料
-                df = yf.download(t, start=start_date, end=end_date, progress=False)
-                
-                # 資料清洗 (Fix yfinance bug)
-                if df.empty:
-                    st.toast(f"⚠️ 找不到 {t}，已跳過。", icon="⚠️")
-                    continue
-                
-                if isinstance(df.columns, pd.MultiIndex):
-                    try:
-                        if t in df.columns.get_level_values(1): 
-                            df = df.xs(key=t, axis=1, level=1)
-                        else:
-                            df.columns = df.columns.get_level_values(0)
-                    except:
-                        df.columns = df.columns.get_level_values(0)
-                
-                df = df.loc[:, ~df.columns.duplicated()]
-                if isinstance(df['Close'], pd.DataFrame):
-                    df['Close'] = df['Close'].iloc[:, 0]
+# 執行模擬
+df = simulate_path(st_level)
+y_min = df['Price'].min() * 0.9
+y_max = max(df['Price'].max(), ko_level) * 1.1
 
-                # 取得關鍵價格
-                current_price = float(df['Close'].iloc[-1])
-                ref_price = current_price # 預設自動抓最新價 = Ref
-                
-                # 計算距離 KI 的幅度
-                ki_price = ref_price * (ki_pct / 100)
-                dist_to_ki = (current_price - ki_price) / current_price * 100
-                
-                # 存入 summary
-                summary_data.append({
-                    "代號": t,
-                    "現價 (Ref)": current_price,
-                    "KI價格": ki_price,
-                    "距離KI (%)": dist_to_ki,
-                    "最新日期": df.index[-1].strftime('%Y-%m-%d')
-                })
-                
-                # 計算歸一化曲線 (Normalized to 100%)
-                # 邏輯：為了畫在同一張圖，我們把所有歷史價格除以 Ref Price (也就是今天的價格)
-                # 這樣今天的價格一定是 100%，我們可以清楚看到過去股價相對於現在的位置
-                df['Normalized'] = (df['Close'] / ref_price) * 100
-                
-                basket_data[t] = df
+# --- 4. 繪圖函數 (通用基礎底圖) ---
+def get_base_figure(title):
+    fig = go.Figure()
+    # 加入標的走勢線 (所有圖都一樣)
+    fig.add_trace(go.Scatter(
+        x=df['Day'], y=df['Price'],
+        mode='lines', name='標的走勢',
+        line=dict(color='#1f77b4', width=2)
+    ))
+    fig.update_layout(
+        title=title,
+        xaxis_title="觀察天數",
+        yaxis_title="價格 (Rebased to 100)",
+        yaxis_range=[y_min, y_max],
+        height=400,
+        margin=dict(l=20, r=20, t=50, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
 
-            if not basket_data:
-                st.error("❌ 所有代號都無法讀取，請檢查輸入。")
-                st.stop()
+# --- 5. 建立三張獨立圖表 ---
 
-            # --- 找出 Worst-of (雖然現在剛好都是 100%，但邏輯上我們顯示距離 KI 最近的) ---
-            # 這裡因為 Ref=Current，所以大家的 Performance 都是 100%。
-            # 但如果我們要模擬 "歷史走勢"，我們看的是各股波動度。
-            
-            summary_df = pd.DataFrame(summary_data)
-            
-            # --- 顯示數據摘要 ---
-            st.success(f"✅ 分析完成 (基準日: {summary_df['最新日期'].iloc[0]})")
-            
-            # 使用 Dataframe 顯示詳細資訊
-            st.subheader("📋 標的監控清單 (Worst-of 觀察)")
-            
-            # 格式化顯示
-            display_df = summary_df[['代號', '現價 (Ref)', 'KI價格', '距離KI (%)']].copy()
-            display_df['現價 (Ref)'] = display_df['現價 (Ref)'].map('${:,.2f}'.format)
-            display_df['KI價格'] = display_df['KI價格'].map('${:,.2f}'.format)
-            display_df['距離KI (%)'] = display_df['距離KI (%)'].map('{:,.2f}%'.format)
-            
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+# === 圖 1: KO 檢視 ===
+fig_ko = get_base_figure("🎯 圖一：KO (敲出價) 檢視")
+# 畫 KO 線
+fig_ko.add_hline(y=ko_level, line_dash="dash", line_color="red", annotation_text=f"KO: {ko_level:.2f}", annotation_position="top left")
+# 畫 KO 觸發區域 (紅色陰影)
+fig_ko.add_hrect(y0=ko_level, y1=y_max, line_width=0, fillcolor="red", opacity=0.1, layer="below")
+fig_ko.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='red', symbol='square', opacity=0.5), name='敲出區 (提早結束)'))
 
-            # --- 圖表 1: 歸一化走勢圖 (Normalized Performance) ---
-            st.subheader(f"📈 多標的績效走勢 (歸一化: Ref=100%)")
-            st.caption("此圖表將所有股票的 **期初價格 (Ref)** 設定為 100%，方便比較不同價位股票的相對走勢與結構防守線。")
-            
-            fig = go.Figure()
-            
-            # 畫每一檔股票的線
-            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'] # 預設五種顏色
-            
-            for i, (ticker, df) in enumerate(basket_data.items()):
-                plot_df = df.iloc[-380:] # 只畫最近 1.5 年
-                color = colors[i % len(colors)]
-                
-                fig.add_trace(go.Scatter(
-                    x=plot_df.index, 
-                    y=plot_df['Normalized'], 
-                    mode='lines', 
-                    name=ticker, 
-                    line=dict(width=2, color=color)
-                ))
 
-            # 畫結構線 (因為是歸一化圖表，所以線是固定的百分比)
-            fig.add_hline(y=ko_pct, line_dash="solid", line_color="red", annotation_text=f"KO ({ko_pct}%)", annotation_position="top left")
-            fig.add_hline(y=strike_pct, line_dash="dash", line_color="green", annotation_text=f"Strike ({strike_pct}%)", annotation_position="bottom left")
-            fig.add_hline(y=ki_pct, line_dash="dash", line_color="orange", annotation_text=f"KI ({ki_pct}%)", annotation_position="bottom left")
-            
-            # 設定圖表
-            fig.update_layout(
-                height=600, 
-                hovermode="x unified", 
-                xaxis_title="日期", 
-                yaxis_title="相對價格 (%)",
-                yaxis_ticksuffix="%"
-            )
-            st.plotly_chart(fig, use_container_width=True)
+# === 圖 2: KI 檢視 ===
+fig_ki = get_base_figure("⚠️ 圖二：KI (敲入價) 檢視")
+# 畫 KI 線
+fig_ki.add_hline(y=ki_level, line_dash="dot", line_color="orange", annotation_text=f"KI: {ki_level:.2f}", annotation_position="bottom left")
+# 畫 KI 風險區域 (橘色陰影)
+fig_ki.add_hrect(y0=y_min, y1=ki_level, line_width=0, fillcolor="orange", opacity=0.1, layer="below")
+fig_ki.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='orange', symbol='square', opacity=0.5), name='敲入區 (風險產生)'))
+# 標記實際跌破的點
+ki_breach = df[df['Price'] < ki_level]
+if not ki_breach.empty:
+    fig_ki.add_trace(go.Scatter(
+        x=ki_breach['Day'], y=ki_breach['Price'],
+        mode='markers', name='已觸及KI點位',
+        marker=dict(color='red', size=6, symbol='x')
+    ))
 
-            # --- 圖表 2: 勝率分析 (各別顯示) ---
-            st.subheader("📊 歷史持有勝率 (各標的獨立回測)")
-            st.markdown("計算過去 2 年，若買進並持有特定天期，獲得正報酬的機率。")
-            
-            periods = {'1M': 21, '3M': 63, '6M': 126, '1Y': 252}
-            
-            # 準備畫圖數據
-            bar_data = []
-            for ticker, df in basket_data.items():
-                for label, days in periods.items():
-                    ret = df['Close'].pct_change(periods=days).dropna()
-                    if len(ret) > 0:
-                        win_rate = (ret > 0).mean() * 100
-                    else:
-                        win_rate = 0
-                    bar_data.append({"代號": ticker, "期間": label, "勝率": win_rate})
-            
-            win_df = pd.DataFrame(bar_data)
-            
-            # 使用 Grouped Bar Chart
-            bar_fig = go.Figure()
-            
-            for ticker in tickers:
-                # 篩選該股票的數據
-                t_df = win_df[win_df['代號'] == ticker]
-                if t_df.empty: continue
-                
-                bar_fig.add_trace(go.Bar(
-                    x=t_df['期間'],
-                    y=t_df['勝率'],
-                    name=ticker,
-                    text=t_df['勝率'].apply(lambda x: f"{x:.0f}%"),
-                    textposition='auto'
-                ))
 
-            bar_fig.update_layout(
-                barmode='group',
-                height=400,
-                yaxis_title="正報酬機率 (%)",
-                yaxis_range=[0, 110],
-                title="各連結標的勝率比較"
-            )
-            st.plotly_chart(bar_fig, use_container_width=True)
+# === 圖 3: ST 檢視 ===
+fig_st = get_base_figure("🏁 圖三：ST (執行價/期初價) 檢視")
+# 畫 ST 線
+fig_st.add_hline(y=st_level, line_width=2, line_color="green", annotation_text=f"ST (期初): {st_level:.2f}", annotation_position="right")
+# 畫期末損益分界
+fig_st.add_hrect(y0=y_min, y1=st_level, line_width=0, fillcolor="green", opacity=0.05, layer="below")
+fig_st.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='green', symbol='square', opacity=0.3), name='期末潛在虧損區 (若曾觸及KI)'))
 
-    except Exception as e:
-        st.error(f"發生系統錯誤: {e}")
 
+# --- 6. 頁面佈局 (三欄並列) ---
+c1, c2, c3 = st.columns(3)
+
+with c1:
+    st.plotly_chart(fig_ko, use_container_width=True)
+    st.caption("觀察重點：價格是否**高於紅線**？若觀察日高於此線，產品提前出場 (獲利結算)。")
+
+with c2:
+    st.plotly_chart(fig_ki, use_container_width=True)
+    st.caption("觀察重點：價格是否曾經**低於橘線**？若期間內曾跌破此線，下方保護消失，期末可能面臨本金損失。")
+
+with c3:
+    st.plotly_chart(fig_st, use_container_width=True)
+    st.caption("觀察重點：期末價格與綠線的關係。若曾觸及 KI 且期末價格低於 ST，將產生虧損 (接股票)。")
+
+# --- 7. 狀態摘要 ---
+st.divider()
+st.subheader("📊 模擬結果摘要")
+has_touched_ki = df['Price'].min() < ki_level
+has_touched_ko = df['Price'].max() > ko_level
+final_price = df['Price'].iloc[-1]
+
+col_res1, col_res2, col_res3 = st.columns(3)
+col_res1.metric("曾觸及 KI (敲入)", "是 (高風險)" if has_touched_ki else "否 (安全)", delta_color="inverse" if has_touched_ki else "normal")
+col_res2.metric("曾觸及 KO (敲出)", "是 (提前結束)" if has_touched_ko else "否 (持有至到期)")
+col_res3.metric("期末價格 vs ST", f"{final_price:.2f} ({((final_price/st_level)-1)*100:+.2f}%)", delta_color="normal" if final_price >= st_level else "inverse")
+
+if has_touched_ki and final_price < st_level:
+    st.error("⚠️ **風險警示**：此模擬路徑顯示，標的曾跌破 KI 且期末價格低於 ST。若為實際商品，投資人將面臨本金虧損 (通常需以 ST 價格承接下跌的股票)。")
+elif has_touched_ko:
+    st.success("💰 **獲利提示**：此模擬路徑顯示，標的曾觸及 KO。若在觀察日觸及，產品將提前獲利出場。")
 else:
-    st.info("👈 請在左側輸入 1~5 檔股票代號，並按 **「🚀 開始計算」**。")
+    st.info("ℹ️ **持有狀態**：此模擬路徑未觸及 KO，也未跌破 KI。通常可領取固定配息至期末拿回本金。")
