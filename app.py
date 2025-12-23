@@ -6,9 +6,9 @@ import numpy as np
 from datetime import datetime, timedelta
 
 # --- 1. 基礎設定 ---
-st.set_page_config(page_title="結構型商品戰情室 (V10.0)", layout="wide")
+st.set_page_config(page_title="結構型商品戰情室 (V10.1)", layout="wide")
 st.title("📊 結構型商品 - 關鍵點位與長週期風險回測")
-st.markdown("依據您的需求，回測區間已擴大為 **「2009/01/01 至今」**，涵蓋更多景氣循環。")
+st.markdown("回測區間：**2009/01/01 至今**。報告順序優化：**獲利潛力 -> 安全性 -> 解套時間**。")
 st.divider()
 
 # --- 2. 側邊欄：參數設定 ---
@@ -33,11 +33,7 @@ run_btn = st.sidebar.button("🚀 開始分析", type="primary")
 # --- 3. 核心函數 ---
 
 def get_stock_data_from_2009(ticker):
-    """
-    【修改】下載從 2009-01-01 至今的資料
-    """
     try:
-        # 指定開始日期
         start_date = "2009-01-01"
         df = yf.download(ticker, start=start_date, progress=False)
         
@@ -137,8 +133,8 @@ def run_comprehensive_backtest(df, ki_pct, strike_pct, months):
     return bt, stats
 
 def plot_integrated_chart(df, ticker, current_price, p_ko, p_ki, p_st):
-    """主圖：走勢 + 關鍵價位 (顯示近3年以保持清晰)"""
-    plot_df = df.tail(750).copy() # 改為顯示約3年，配合長週期回測的語境
+    """主圖：走勢 + 關鍵價位"""
+    plot_df = df.tail(750).copy() # 顯示近3年
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['Close'], mode='lines', name='股價', line=dict(color='black', width=1.5)))
     fig.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], mode='lines', name='月線', line=dict(color='#3498db', width=1)))
@@ -158,7 +154,7 @@ def plot_integrated_chart(df, ticker, current_price, p_ko, p_ki, p_st):
     all_prices = [p_ko, p_ki, p_st, plot_df['Close'].max(), plot_df['Close'].min()]
     y_min, y_max = min(all_prices)*0.9, max(all_prices)*1.05
 
-    fig.update_layout(title=f"{ticker} - 走勢與關鍵價位 (顯示近3年)", height=450, margin=dict(r=80), xaxis_title="日期", yaxis_title="價格", yaxis_range=[y_min, y_max], hovermode="x unified", legend=dict(orientation="h", y=1.02, x=0))
+    fig.update_layout(title=f"{ticker} - 走勢與關鍵價位 (近3年)", height=450, margin=dict(r=80), xaxis_title="日期", yaxis_title="價格", yaxis_range=[y_min, y_max], hovermode="x unified", legend=dict(orientation="h", y=1.02, x=0))
     return fig
 
 def plot_rolling_bar_chart(bt_data, ticker):
@@ -182,7 +178,6 @@ if run_btn:
             st.markdown(f"### 📌 標的：{ticker}")
             
             with st.spinner(f"正在分析 {ticker} (2009-Now) ..."):
-                # 【修改】呼叫新函數
                 df, err = get_stock_data_from_2009(ticker)
             
             if err:
@@ -220,7 +215,7 @@ if run_btn:
             st.plotly_chart(fig_main, use_container_width=True)
 
             # ==========================================
-            # 3. 藍底解釋 (AI 解讀)
+            # 3. 藍底解釋 (AI 解讀) - 已調整順序
             # ==========================================
             loss_pct = 100 - stats['safety_prob']
             stuck_rate = 0
@@ -231,11 +226,11 @@ if run_btn:
             st.info(f"""
             **📊 長週期回測報告 (2009/01/01 至今，每 {period_months} 個月一期)：**
             
-            1.  **安全性分析 (不被換到股票的機率)**：
-                在過去 16 年任意時間點進場，有 **{stats['safety_prob']:.1f}%** 的機率可以安全拿回本金 (未跌破 KI 或 跌破後漲回)。
-                
-            2.  **獲利潛力 (正報酬機率)**：
+            1.  **獲利潛力 (正報酬機率)**：
                 若不考慮配息，單純看股價，持有期滿後股價上漲的機率為 **{stats['positive_prob']:.1f}%**。
+                
+            2.  **安全性分析 (不被換到股票的機率)**：
+                在過去 16 年任意時間點進場，有 **{stats['safety_prob']:.1f}%** 的機率可以安全拿回本金 (未跌破 KI 或 跌破後漲回)。
                 
             3.  **恢復力分析 (回到 Strike 的時間)**：
                 若不幸發生接股票的情況 (機率約 {loss_pct:.1f}%)，根據歷史經驗，**平均等待 {avg_days:.0f} 天** 股價即會漲回 Strike 價格。
