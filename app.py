@@ -5,188 +5,181 @@ import yfinance as yf
 from datetime import datetime, timedelta
 
 # --- 1. 基礎設定 ---
-st.set_page_config(page_title="結構型商品關鍵價位分析", layout="wide")
-st.title("📉 結構型商品 - 關鍵價位三視圖 (KO / KI / Strike)")
-st.markdown("輸入股票代碼與自訂關鍵價位，系統將調閱歷史走勢並繪製防線。")
+st.set_page_config(page_title="結構型商品戰情室", layout="wide")
+st.title("📉 結構型商品 - 歷史均線與關鍵點位分析")
+st.markdown("""
+此工具支援 **多檔標的** 批量分析。系統將自動下載 **過去 3 年** 股價，
+並計算 **月/季/年線**，同時依據您設定的百分比，自動換算並繪製 **KO / KI / Strike** 水平防線。
+""")
 st.divider()
 
-# --- 2. 側邊欄：設定區 ---
-st.sidebar.header("1️⃣ 參數設定")
-
-# 2.1 股票代碼與期間
-ticker = st.sidebar.text_input("股票代碼 (Yahoo Finance 格式)", value="NVDA", help="美股請打代碼 (如 AAPL)，台股請加 .TW (如 2330.TW)")
-lookback = st.sidebar.selectbox("歷史回測期間", ["3個月", "6個月", "1年", "Year to Date (今年以來)"], index=2)
+# --- 2. 側邊欄：參數設定 ---
+st.sidebar.header("1️⃣ 輸入標的 (可多檔)")
+default_tickers = "2330.TW, NVDA, TSLA"
+tickers_input = st.sidebar.text_area("股票代碼 (用逗號分隔)", value=default_tickers, height=100, help="例如: 2330.TW, AAPL, 0050.TW")
 
 st.sidebar.divider()
+st.sidebar.header("2️⃣ 設定結構條件 (%)")
+st.sidebar.info("系統將以「最新收盤價」作為 100% 基準，自動計算以下價位：")
 
-# 2.2 關鍵價位設定 (依照您的要求設定預設值)
-st.sidebar.subheader("2️⃣ 結構條件")
-ko_price = st.sidebar.number_input("KO (敲出價 - 上方)", value=100.0, step=1.0, format="%.2f")
-ki_price = st.sidebar.number_input("KI (敲入價 - 下方)", value=65.0, step=1.0, format="%.2f")
-strike_price = st.sidebar.number_input("ST (期初/執行價)", value=80.0, step=1.0, format="%.2f")
+# 使用數值輸入框讓您精準設定
+ko_pct = st.sidebar.number_input("KO (敲出價 %)", value=103.0, step=0.5, format="%.1f")
+strike_pct = st.sidebar.number_input("Strike (執行價 %)", value=100.0, step=1.0, format="%.1f")
+ki_pct = st.sidebar.number_input("KI (敲入價 %)", value=65.0, step=1.0, format="%.1f")
 
-st.sidebar.markdown("---")
+run_btn = st.sidebar.button("🚀 開始分析", type="primary")
 
-# 2.3 執行按鈕 (放在設定下方)
-run_btn = st.sidebar.button("🚀 執行分析", type="primary")
+# --- 3. 核心函數 ---
 
-# --- 3. 核心邏輯 ---
-
-# 定義一個安全的資料讀取函數
-def fetch_stock_data(ticker, period_option):
+def get_stock_data(ticker):
+    """下載3年資料並計算均線"""
     try:
-        # 設定時間範圍
         end_date = datetime.now()
-        if period_option == "3個月": start_date = end_date - timedelta(days=90)
-        elif period_option == "6個月": start_date = end_date - timedelta(days=180)
-        elif period_option == "1年": start_date = end_date - timedelta(days=365)
-        else: start_date = datetime(end_date.year, 1, 1)
-
-        # 下載資料
-        df_raw = yf.download(ticker, start=start_date, end=end_date, progress=False)
+        start_date = end_date - timedelta(days=365 * 3) # 過去三年
         
-        if df_raw.empty:
-            return None, f"找不到代碼 {ticker} 的資料，請檢查拼字或後綴。"
-
-        # 【關鍵修正】強制清理資料格式，解決 Series to float 錯誤
-        df = df_raw.reset_index()
+        df = yf.download(ticker, start=start_date, end=end_date, progress=False)
         
-        # 1. 處理 MultiIndex (例如 ('Close', 'NVDA') -> 'Close')
+        if df.empty:
+            return None, f"找不到 {ticker}"
+            
+        df = df.reset_index()
+        
+        # 處理 MultiIndex
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
-        # 2. 移除重複欄位
         df = df.loc[:, ~df.columns.duplicated()]
         
-        # 3. 確保有 Close 欄位
         if 'Close' not in df.columns:
-            return None, "資料來源缺少收盤價欄位。"
+            return None, "無收盤價資料"
 
-        # 只取需要的欄位
-        df = df[['Date', 'Close']].copy()
+        # 確保格式正確
+        df['Date'] = pd.to_datetime(df['Date'])
+        df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
+        df = df.dropna(subset=['Close'])
+
+        # 計算均線 (MA)
+        df['MA20_Month'] = df['Close'].rolling(window=20).mean()   # 月線
+        df['MA60_Quarter'] = df['Close'].rolling(window=60).mean() # 季線
+        df['MA240_Year'] = df['Close'].rolling(window=240).mean()  # 年線
         
         return df, None
-
     except Exception as e:
         return None, str(e)
 
-# 定義通用繪圖函數
-def plot_chart(df, title, line_price, line_color, line_name):
-    fig = go.Figure()
+def plot_single_view(df, ticker, current_price, level_price, level_name, color, line_style="dash"):
+    """繪製單張圖表 (包含股價、三條均線、一條關鍵水平線)"""
     
-    # 1. 畫股價走勢
+    fig = go.Figure()
+
+    # 1. 股價走勢 (K線太亂，改用線圖較清晰，或用區域圖)
     fig.add_trace(go.Scatter(
         x=df['Date'], y=df['Close'],
-        mode='lines', name=ticker,
-        line=dict(color='#1f77b4', width=2)
+        mode='lines', name='股價',
+        line=dict(color='gray', width=1.5),
+        opacity=0.6
     ))
 
-    # 2. 畫關鍵價位虛線
+    # 2. 三條均線 (月/季/年)
+    fig.add_trace(go.Scatter(x=df['Date'], y=df['MA20_Month'], mode='lines', name='月線 (20MA)', line=dict(color='#3498db', width=1)))
+    fig.add_trace(go.Scatter(x=df['Date'], y=df['MA60_Quarter'], mode='lines', name='季線 (60MA)', line=dict(color='#f1c40f', width=1)))
+    fig.add_trace(go.Scatter(x=df['Date'], y=df['MA240_Year'], mode='lines', name='年線 (240MA)', line=dict(color='#9b59b6', width=1)))
+
+    # 3. 關鍵價位水平線 (User 指定的 KO/KI/Strike)
     fig.add_hline(
-        y=line_price, 
-        line_dash="dash", # 虛線
-        line_color=line_color, 
-        line_width=2,
-        annotation_text=f"{line_name}: {line_price:.2f}", 
-        annotation_position="top left" if line_name == "KO" else "bottom left"
+        y=level_price,
+        line_dash=line_style,
+        line_color=color,
+        line_width=3,
+        annotation_text=f"{level_name}: {level_price:.2f}",
+        annotation_position="top left" if level_name == "KO" else "bottom left"
     )
 
-    # 自動調整 Y 軸範圍，確保線看得到
-    all_vals = df['Close'].tolist() + [line_price]
-    y_min, y_max = min(all_vals) * 0.9, max(all_vals) * 1.1
-
-    fig.update_layout(
-        title=dict(text=title, font=dict(size=18)),
-        xaxis_title="日期",
-        yaxis_title="價格",
-        height=400,
-        margin=dict(l=20, r=20, t=40, b=20),
-        yaxis_range=[y_min, y_max],
+    # 4. 標示最新價格
+    fig.add_trace(go.Scatter(
+        x=[df['Date'].iloc[-1]], y=[current_price],
+        mode='markers+text',
+        marker=dict(color='black', size=8),
+        text=[f"現價 {current_price:.2f}"],
+        textposition="middle right",
         showlegend=False
+    ))
+
+    # 設定版面
+    y_vals = df['Close'].tolist() + [level_price]
+    # 這裡只取最近 1 年的數據來決定 Y 軸範圍，避免 3 年前的價格差異太大導致圖被壓縮
+    recent_vals = df['Close'].tail(250).tolist() + [level_price]
+    
+    fig.update_layout(
+        title=f"{ticker} - {level_name} 檢視",
+        xaxis_title=None,
+        yaxis_title="價格",
+        height=350,
+        margin=dict(l=20, r=20, t=40, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis_range=[min(recent_vals)*0.85, max(recent_vals)*1.15], # 動態調整視角
+        hovermode="x unified"
     )
+    
     return fig
 
-# --- 4. 執行流程 ---
+# --- 4. 執行邏輯 ---
 
 if run_btn:
-    with st.spinner(f"正在分析 {ticker} 走勢..."):
-        df_data, error_msg = fetch_stock_data(ticker, lookback)
-        
-        if error_msg:
-            st.error(f"❌ 錯誤: {error_msg}")
-        else:
-            # 取得最新價格 (安全轉型)
-            try:
-                last_val = df_data['Close'].iloc[-1]
-                # 如果是 Series (單一元素)，轉為純量
-                if hasattr(last_val, 'item'):
-                    current_price = float(last_val.item())
-                else:
-                    current_price = float(last_val)
-            except:
-                current_price = 0.0
-
-            st.success(f"✅ 資料讀取成功！{ticker} 最新收盤價: **{current_price:.2f}**")
+    # 處理輸入的股票代碼
+    ticker_list = [t.strip().upper() for t in tickers_input.split(',') if t.strip()]
+    
+    if not ticker_list:
+        st.warning("請輸入至少一檔股票代碼。")
+    else:
+        for ticker in ticker_list:
+            st.markdown(f"### 📌 標的：{ticker}")
             
-            # 顯示比較狀態
-            col_info1, col_info2, col_info3 = st.columns(3)
-            
-            # KO 狀態
-            ko_dist = (ko_price - current_price) / current_price * 100
-            if current_price >= ko_price:
-                col_info1.metric("KO (敲出) 狀態", "已敲出! 🎉", f"高於 KO {current_price - ko_price:.2f}")
-            else:
-                col_info1.metric("KO (敲出) 狀態", "未敲出", f"距離 {ko_dist:.2f}%")
+            with st.spinner(f"正在下載 {ticker} 資料..."):
+                df, err = get_stock_data(ticker)
                 
-            # KI 狀態
-            # 檢查歷史是否曾跌破 KI
-            ki_hits = df_data[df_data['Close'] <= ki_price]
-            has_ki = not ki_hits.empty
-            ki_dist = (current_price - ki_price) / current_price * 100
+            if err:
+                st.error(f"無法讀取 {ticker}: {err}")
+                continue
+                
+            # 取得最新價格作為基準 (Base Price)
+            try:
+                current_price = float(df['Close'].iloc[-1])
+            except:
+                st.error(f"{ticker} 價格數據異常")
+                continue
+
+            # 自動算出絕對價格
+            p_ko = current_price * (ko_pct / 100)
+            p_st = current_price * (strike_pct / 100)
+            p_ki = current_price * (ki_pct / 100)
+
+            # 顯示摘要數據
+            c_info1, c_info2, c_info3, c_info4 = st.columns(4)
+            c_info1.metric("最新收盤價 (Base)", f"{current_price:.2f}")
+            c_info2.metric(f"KO ({ko_pct}%)", f"{p_ko:.2f}", f"距離 {(p_ko-current_price):.2f}")
+            c_info3.metric(f"Strike ({strike_pct}%)", f"{p_st:.2f}")
+            c_info4.metric(f"KI ({ki_pct}%)", f"{p_ki:.2f}", f"緩衝 {(current_price-p_ki):.2f}", delta_color="inverse")
+
+            # 繪製三張圖 (依照您的要求)
+            col1, col2, col3 = st.columns(3)
             
-            if has_ki:
-                col_info2.metric("KI (敲入) 狀態", "曾跌破 (危險) ⚠️", f"最低曾至 {df_data['Close'].min():.2f}", delta_color="inverse")
-            else:
-                col_info2.metric("KI (敲入) 狀態", "安全 (未跌破)", f"緩衝 {ki_dist:.2f}%")
-
-            # Strike 狀態
-            st_diff = (current_price - strike_price) / strike_price * 100
-            col_info3.metric("與 ST (執行價) 距離", f"{st_diff:+.2f}%", f"現價 {current_price:.2f}")
-
-            st.divider()
-
-            # --- 繪製三張圖 ---
-            c1, c2, c3 = st.columns(3)
-
-            # 圖 1: KO
-            with c1:
-                st.subheader("🚀 KO 敲出觀察")
-                fig_ko = plot_chart(df_data, f"KO 價格: {ko_price}", ko_price, "red", "KO")
-                # 加強 KO 區域標示
-                fig_ko.add_hrect(y0=ko_price, y1=max(df_data['Close'].max(), ko_price)*1.1, line_width=0, fillcolor="red", opacity=0.1, layer="below")
-                st.plotly_chart(fig_ko, use_container_width=True)
-
-            # 圖 2: KI
-            with c2:
-                st.subheader("🛡️ KI 敲入觀察")
-                fig_ki = plot_chart(df_data, f"KI 價格: {ki_price}", ki_price, "orange", "KI")
-                # 加強 KI 區域標示
-                fig_ki.add_hrect(y0=min(df_data['Close'].min(), ki_price)*0.9, y1=ki_price, line_width=0, fillcolor="orange", opacity=0.1, layer="below")
-                # 標記跌破點
-                if has_ki:
-                    fig_ki.add_trace(go.Scatter(x=ki_hits['Date'], y=ki_hits['Close'], mode='markers', marker=dict(color='red', symbol='x'), name='跌破點'))
-                st.plotly_chart(fig_ki, use_container_width=True)
-
-            # 圖 3: ST
-            with c3:
-                st.subheader("⚖️ ST 執行價觀察")
-                fig_st = plot_chart(df_data, f"ST 價格: {strike_price}", strike_price, "green", "ST")
-                st.plotly_chart(fig_st, use_container_width=True)
+            with col1:
+                st.caption("🔴 KO 敲出觀察 (上方阻力)")
+                fig1 = plot_single_view(df, ticker, current_price, p_ko, "KO", "red", "dash")
+                st.plotly_chart(fig1, use_container_width=True)
+                
+            with col2:
+                st.caption("🟠 KI 敲入觀察 (下方支撐)")
+                fig2 = plot_single_view(df, ticker, current_price, p_ki, "KI", "orange", "dot")
+                st.plotly_chart(fig2, use_container_width=True)
+                
+            with col3:
+                st.caption("🟢 Strike 執行價觀察 (成本/比價)")
+                fig3 = plot_single_view(df, ticker, current_price, p_st, "Strike", "green", "solid")
+                st.plotly_chart(fig3, use_container_width=True)
+            
+            st.divider() # 分隔不同股票
 
 else:
-    st.info("👈 請在左側設定參數，並點擊「執行分析」按鈕開始。")
-    # 預設畫面
-    c1, c2, c3 = st.columns(3)
-    with c1: st.markdown("### 等待執行...")
-    with c2: st.markdown("### 等待執行...")
-    with c3: st.markdown("### 等待執行...")
+    st.info("👆 請在左側輸入股票代碼並設定條件，按下「開始分析」。")
