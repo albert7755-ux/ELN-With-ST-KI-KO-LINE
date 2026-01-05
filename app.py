@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
 # --- 1. 基礎設定 ---
-st.set_page_config(page_title="結構型商品戰情室 (V10.5)", layout="wide")
+st.set_page_config(page_title="結構型商品戰情室 (V10.6)", layout="wide")
 
 # ==========================================
 # 🔐 密碼保護機制
@@ -72,7 +72,7 @@ run_btn = st.sidebar.button("🚀 開始分析", type="primary")
 def show_tradingview_widget_zoomed(symbol):
     """
     顯示放大 1.2 倍的 TradingView 機構簡介
-    (V10.5 優化：縮減 iframe 高度以消除下方空白)
+    (V10.6 極致優化：將內部高度設為 300，外部容器設為 370，消除多餘空白)
     """
     html_code = f"""
     <div style="transform: scale(1.2); transform-origin: top left; width: 83.3%;">
@@ -81,7 +81,7 @@ def show_tradingview_widget_zoomed(symbol):
           <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-profile.js" async>
           {{
           "width": "100%",
-          "height": "330", 
+          "height": "300", 
           "colorTheme": "light",
           "isTransparent": false,
           "symbol": "{symbol}",
@@ -91,8 +91,8 @@ def show_tradingview_widget_zoomed(symbol):
         </div>
     </div>
     """
-    # 將高度從原本的 450 縮減為 400，剛好容納放大後的內容
-    components.html(html_code, height=400)
+    # height=370 是關鍵：300 * 1.2 = 360，留 10px 緩衝，切掉所有下方空白
+    components.html(html_code, height=370)
 
 def get_stock_data_from_2009(ticker):
     try:
@@ -240,7 +240,7 @@ if run_btn:
             st.markdown(f"### 📌 標的：{ticker}")
 
             # ==========================================
-            # A. 顯示 TradingView 機構簡介 (放大且緊湊版)
+            # A. 顯示 TradingView 機構簡介 (緊湊版)
             # ==========================================
             st.subheader("🏢 發行機構簡介")
             show_tradingview_widget_zoomed(ticker)
