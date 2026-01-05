@@ -3,41 +3,33 @@ import plotly.graph_objects as go
 import pandas as pd
 import yfinance as yf
 import numpy as np
-import streamlit.components.v1 as components # 新增這個模組來顯示 TradingView
+import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
 # --- 1. 基礎設定 ---
-st.set_page_config(page_title="結構型商品戰情室 (V10.4)", layout="wide")
+st.set_page_config(page_title="結構型商品戰情室 (V10.5)", layout="wide")
 
 # ==========================================
-# 🔐 密碼保護機制 (Password Protection)
+# 🔐 密碼保護機制
 # ==========================================
 def check_password():
     """Returns `True` if the user had the correct password."""
 
     def password_entered():
-        """Checks whether a password entered by the user is correct."""
         if st.session_state["password"] == "5428":
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # don't store password
+            del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        # First run, show input for password.
-        st.text_input(
-            "請輸入系統密碼 (Access Code)", type="password", on_change=password_entered, key="password"
-        )
+        st.text_input("請輸入系統密碼 (Access Code)", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
-        # Password incorrect, show input + error.
-        st.text_input(
-            "請輸入系統密碼 (Access Code)", type="password", on_change=password_entered, key="password"
-        )
+        st.text_input("請輸入系統密碼 (Access Code)", type="password", on_change=password_entered, key="password")
         st.error("❌ 密碼錯誤 (Incorrect Password)")
         return False
     else:
-        # Password correct.
         return True
 
 if not check_password():
@@ -47,8 +39,8 @@ if not check_password():
 # 🔓 主程式開始
 # ==========================================
 
-st.title("📊 FCN - 關鍵點位與長週期風險回測")
-st.markdown("回測區間：**2009/01/01 至今**。**含 TradingView 機構簡介**。")
+st.title("📊 結構型商品 - 關鍵點位與長週期風險回測")
+st.markdown("回測區間：**2009/01/01 至今**。**版面優化：緊湊型機構簡介**。")
 st.divider()
 
 # --- 2. 側邊欄：參數設定 ---
@@ -80,15 +72,16 @@ run_btn = st.sidebar.button("🚀 開始分析", type="primary")
 def show_tradingview_widget_zoomed(symbol):
     """
     顯示放大 1.2 倍的 TradingView 機構簡介
+    (V10.5 優化：縮減 iframe 高度以消除下方空白)
     """
     html_code = f"""
-    <div style="transform: scale(1.2); transform-origin: top left; width: 83%; margin-bottom: 20px;">
+    <div style="transform: scale(1.2); transform-origin: top left; width: 83.3%;">
         <div class="tradingview-widget-container">
           <div class="tradingview-widget-container__widget"></div>
           <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-profile.js" async>
           {{
           "width": "100%",
-          "height": "350",
+          "height": "330", 
           "colorTheme": "light",
           "isTransparent": false,
           "symbol": "{symbol}",
@@ -98,8 +91,8 @@ def show_tradingview_widget_zoomed(symbol):
         </div>
     </div>
     """
-    # 高度設為 450 以容納放大後的內容
-    components.html(html_code, height=450)
+    # 將高度從原本的 450 縮減為 400，剛好容納放大後的內容
+    components.html(html_code, height=400)
 
 def get_stock_data_from_2009(ticker):
     try:
@@ -247,7 +240,7 @@ if run_btn:
             st.markdown(f"### 📌 標的：{ticker}")
 
             # ==========================================
-            # A. 顯示 TradingView 機構簡介 (放大版) [新增]
+            # A. 顯示 TradingView 機構簡介 (放大且緊湊版)
             # ==========================================
             st.subheader("🏢 發行機構簡介")
             show_tradingview_widget_zoomed(ticker)
