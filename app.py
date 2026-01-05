@@ -6,9 +6,9 @@ import numpy as np
 from datetime import datetime, timedelta
 
 # --- 1. 基礎設定 ---
-st.set_page_config(page_title="結構型商品戰情室 (V10.1)", layout="wide")
-st.title("📊 結構型商品 - 關鍵點位與長週期風險回測")
-st.markdown("回測區間：**2009/01/01 至今**。報告順序優化：**獲利潛力 -> 安全性 -> 解套時間**。")
+st.set_page_config(page_title="結構型商品戰情室 (V10.3)", layout="wide")
+st.title("📊 FCN - 關鍵點位與長週期風險回測")
+st.markdown("回測區間：**2009/01/01 至今**。報告順序：**獲利潛力 -> 安全性 -> 解套時間**。")
 st.divider()
 
 # --- 2. 側邊欄：參數設定 ---
@@ -25,7 +25,12 @@ strike_pct = st.sidebar.number_input("Strike (轉換/執行價 %)", value=80.0, 
 ki_pct = st.sidebar.number_input("KI (下檔保護價 %)", value=65.0, step=1.0, format="%.1f")
 
 st.sidebar.divider()
-st.sidebar.header("3️⃣ 回測參數設定")
+st.sidebar.header("3️⃣ 投資與配息設定")
+principal = st.sidebar.number_input("投資本金 (例如 USD)", value=100000, step=10000, help="輸入客戶預計投資的金額")
+coupon_pa = st.sidebar.number_input("年化配息率 (Coupon %)", value=8.0, step=0.5, format="%.1f")
+
+st.sidebar.divider()
+st.sidebar.header("4️⃣ 回測參數設定")
 period_months = st.sidebar.number_input("產品/觀察天期 (月)", min_value=1, max_value=60, value=6, step=1)
 
 run_btn = st.sidebar.button("🚀 開始分析", type="primary")
@@ -207,6 +212,18 @@ if run_btn:
             c2.metric(f"KO ({ko_pct}%)", f"{p_ko:.2f}", help="若股價高於此，提前獲利出場")
             c3.metric(f"KI ({ki_pct}%)", f"{p_ki:.2f}", help="若股價跌破此，保護消失", delta_color="inverse")
             c4.metric(f"Strike ({strike_pct}%)", f"{p_st:.2f}", help="期初價格或接股成本")
+
+            # ==========================================
+            # [修正區塊] 💰 潛在配息試算 (只留本金與月配息)
+            # ==========================================
+            # 計算邏輯
+            monthly_income = principal * (coupon_pa / 100) / 12
+            
+            st.markdown("#### 💰 潛在現金流試算 (Income Analysis)")
+            m1, m2 = st.columns(2) # 改為兩欄
+            m1.metric("投資本金", f"${principal:,.0f}")
+            m2.metric("預估每月配息", f"${monthly_income:,.0f}", help=f"計算公式: 本金 x {coupon_pa}% / 12")
+            st.divider()
 
             # ==========================================
             # 2. 走勢及關鍵價位圖 (主圖)
