@@ -3,10 +3,11 @@ import plotly.graph_objects as go
 import pandas as pd
 import yfinance as yf
 import numpy as np
+import streamlit.components.v1 as components # 新增這個模組來顯示 TradingView
 from datetime import datetime, timedelta
 
 # --- 1. 基礎設定 ---
-st.set_page_config(page_title="結構型商品戰情室 (V10.3 鎖)", layout="wide")
+st.set_page_config(page_title="結構型商品戰情室 (V10.4)", layout="wide")
 
 # ==========================================
 # 🔐 密碼保護機制 (Password Protection)
@@ -40,14 +41,14 @@ def check_password():
         return True
 
 if not check_password():
-    st.stop()  # 如果密碼沒過，程式停止執行，不顯示下方內容
+    st.stop()
 
 # ==========================================
-# 🔓 主程式開始 (Main App)
+# 🔓 主程式開始
 # ==========================================
 
 st.title("📊 FCN - 關鍵點位與長週期風險回測")
-st.markdown("回測區間：**2009/01/01 至今**。**已登入授權模式**。")
+st.markdown("回測區間：**2009/01/01 至今**。**含 TradingView 機構簡介**。")
 st.divider()
 
 # --- 2. 側邊欄：參數設定 ---
@@ -75,6 +76,30 @@ period_months = st.sidebar.number_input("產品/觀察天期 (月)", min_value=1
 run_btn = st.sidebar.button("🚀 開始分析", type="primary")
 
 # --- 3. 核心函數 ---
+
+def show_tradingview_widget_zoomed(symbol):
+    """
+    顯示放大 1.2 倍的 TradingView 機構簡介
+    """
+    html_code = f"""
+    <div style="transform: scale(1.2); transform-origin: top left; width: 83%; margin-bottom: 20px;">
+        <div class="tradingview-widget-container">
+          <div class="tradingview-widget-container__widget"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-profile.js" async>
+          {{
+          "width": "100%",
+          "height": "350",
+          "colorTheme": "light",
+          "isTransparent": false,
+          "symbol": "{symbol}",
+          "locale": "zh_TW"
+          }}
+          </script>
+        </div>
+    </div>
+    """
+    # 高度設為 450 以容納放大後的內容
+    components.html(html_code, height=450)
 
 def get_stock_data_from_2009(ticker):
     try:
@@ -220,6 +245,12 @@ if run_btn:
     else:
         for ticker in ticker_list:
             st.markdown(f"### 📌 標的：{ticker}")
+
+            # ==========================================
+            # A. 顯示 TradingView 機構簡介 (放大版) [新增]
+            # ==========================================
+            st.subheader("🏢 發行機構簡介")
+            show_tradingview_widget_zoomed(ticker)
             
             with st.spinner(f"正在分析 {ticker} (2009-Now) ..."):
                 df, err = get_stock_data_from_2009(ticker)
@@ -244,7 +275,7 @@ if run_btn:
                 continue
 
             # ==========================================
-            # 1. 四大重點指標 (價位)
+            # B. 四大重點指標 (價位)
             # ==========================================
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("最新股價", f"{current_price:.2f}")
@@ -253,7 +284,7 @@ if run_btn:
             c4.metric(f"Strike ({strike_pct}%)", f"{p_st:.2f}", help="期初價格或接股成本")
 
             # ==========================================
-            # [功能] 💰 潛在配息試算 (已移除總配息欄位)
+            # C. 💰 潛在配息試算
             # ==========================================
             monthly_income = principal * (coupon_pa / 100) / 12
             
@@ -264,13 +295,13 @@ if run_btn:
             st.divider()
 
             # ==========================================
-            # 2. 走勢及關鍵價位圖 (主圖)
+            # D. 走勢及關鍵價位圖 (主圖)
             # ==========================================
             fig_main = plot_integrated_chart(df, ticker, current_price, p_ko, p_ki, p_st)
             st.plotly_chart(fig_main, use_container_width=True)
 
             # ==========================================
-            # 3. 藍底解釋 (AI 解讀)
+            # E. 藍底解釋 (AI 解讀)
             # ==========================================
             loss_pct = 100 - stats['safety_prob']
             stuck_rate = 0
@@ -293,7 +324,7 @@ if run_btn:
             """)
 
             # ==========================================
-            # 4. 回測圖 (Bar Chart)
+            # F. 回測圖 (Bar Chart)
             # ==========================================
             st.subheader("📉 歷史滾動回測結果")
             st.caption("🟩 **綠色**：安全 (拿回本金) ｜ 🟥 **紅色**：接股票 (虧損幅度)")
@@ -306,7 +337,7 @@ else:
     st.info("👈 請在左側設定參數，按下「開始分析」。")
 
 # ==========================================
-# 5. 底部警語
+# 6. 底部警語
 # ==========================================
 st.markdown("""
 <style>
