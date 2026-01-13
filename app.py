@@ -3,11 +3,11 @@ import plotly.graph_objects as go
 import pandas as pd
 import yfinance as yf
 import numpy as np
-import streamlit.components.v1 as components
+# 移除了 components 的 import，因為 TradingView 移除了
 from datetime import datetime, timedelta
 
 # --- 1. 基礎設定 ---
-st.set_page_config(page_title="結構型商品戰情室 (V10.6)", layout="wide")
+st.set_page_config(page_title="結構型商品戰情室 (V10.7 - No Profile)", layout="wide")
 
 # ==========================================
 # 🔐 密碼保護機制
@@ -69,30 +69,7 @@ run_btn = st.sidebar.button("🚀 開始分析", type="primary")
 
 # --- 3. 核心函數 ---
 
-def show_tradingview_widget_zoomed(symbol):
-    """
-    顯示放大 1.2 倍的 TradingView 機構簡介
-    (V10.6 極致優化：將內部高度設為 300，外部容器設為 370，消除多餘空白)
-    """
-    html_code = f"""
-    <div style="transform: scale(1.2); transform-origin: top left; width: 83.3%;">
-        <div class="tradingview-widget-container">
-          <div class="tradingview-widget-container__widget"></div>
-          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-profile.js" async>
-          {{
-          "width": "100%",
-          "height": "300", 
-          "colorTheme": "light",
-          "isTransparent": false,
-          "symbol": "{symbol}",
-          "locale": "zh_TW"
-          }}
-          </script>
-        </div>
-    </div>
-    """
-    # height=370 是關鍵：300 * 1.2 = 360，留 10px 緩衝，切掉所有下方空白
-    components.html(html_code, height=370)
+# (已移除 TradingView 函數)
 
 def get_stock_data_from_2009(ticker):
     try:
@@ -239,11 +216,7 @@ if run_btn:
         for ticker in ticker_list:
             st.markdown(f"### 📌 標的：{ticker}")
 
-            # ==========================================
-            # A. 顯示 TradingView 機構簡介 (緊湊版)
-            # ==========================================
-            st.subheader("🏢 發行機構簡介")
-            show_tradingview_widget_zoomed(ticker)
+            # (已移除 TradingView 區塊)
             
             with st.spinner(f"正在分析 {ticker} (2009-Now) ..."):
                 df, err = get_stock_data_from_2009(ticker)
