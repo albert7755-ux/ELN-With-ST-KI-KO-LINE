@@ -3,7 +3,6 @@ import plotly.graph_objects as go
 import pandas as pd
 import yfinance as yf
 import numpy as np
-# 移除了 components 的 import，因為 TradingView 移除了
 from datetime import datetime, timedelta
 
 # --- 1. 基礎設定 ---
@@ -69,8 +68,6 @@ run_btn = st.sidebar.button("🚀 開始分析", type="primary")
 
 # --- 3. 核心函數 ---
 
-# (已移除 TradingView 函數)
-
 def get_stock_data_from_2009(ticker):
     try:
         start_date = "2009-01-01"
@@ -78,9 +75,17 @@ def get_stock_data_from_2009(ticker):
         
         if df.empty: return None, f"找不到 {ticker} 或該期間無資料"
         
-        df = df.reset_index()
+        # 修正：處理新版 yfinance 的 MultiIndex 欄位結構
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
+            
+        # 將 Date 索引還原成一般欄位
+        df = df.reset_index()
+        
+        # 修正：若新版 yfinance 將日期命名為 'index' 或 'Datetime'，統一改回 'Date'
+        if 'Date' not in df.columns:
+            df = df.rename(columns={'index': 'Date', 'Datetime': 'Date'})
+            
         df = df.loc[:, ~df.columns.duplicated()]
         
         if 'Close' not in df.columns: return None, "無收盤價資料"
@@ -215,8 +220,6 @@ if run_btn:
     else:
         for ticker in ticker_list:
             st.markdown(f"### 📌 標的：{ticker}")
-
-            # (已移除 TradingView 區塊)
             
             with st.spinner(f"正在分析 {ticker} (2009-Now) ..."):
                 df, err = get_stock_data_from_2009(ticker)
