@@ -247,7 +247,11 @@ if run_btn:
             # B. 四大重點指標 (價位)
             # ==========================================
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("最新股價", f"{current_price:.2f}")
+            last_date = pd.to_datetime(df['Date'].iloc[-1]).date()
+            c1.metric("最新股價", f"{current_price:.2f}", help=f"收盤日期：{last_date}")
+            c1.caption(f"收盤日：{last_date}")
+            if (pd.Timestamp.now(tz="Asia/Taipei").date() - last_date).days > 5:
+                st.warning(f"⚠️ {ticker} 最新價格停在 {last_date}，資料可能沒有更新，請稍後再試或通知管理員。")
             c2.metric(f"KO ({ko_pct}%)", f"{p_ko:.2f}", help="若股價高於此，提前獲利出場")
             c3.metric(f"KI ({ki_pct}%)", f"{p_ki:.2f}", help="若股價跌破此，保護消失", delta_color="inverse")
             c4.metric(f"Strike ({strike_pct}%)", f"{p_st:.2f}", help="期初價格或接股成本")
