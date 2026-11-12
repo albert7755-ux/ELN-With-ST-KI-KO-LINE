@@ -94,6 +94,31 @@ def get_stock_data_from_2009(ticker):
         df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
         df = df.dropna(subset=['Close'])
 
+        # 補最新一天：Yahoo 的日線常常晚半天才補上最新交易日（或那一天的收盤是空值被上面刪掉），
+        # 改用 5 天的 30 分鐘線抓最後一筆成交價；如果日期比日線新，就補一列進去
+        try:
+            intraday = yf.Ticker(ticker).history(period="5d", interval="30m", auto_adjust=False)
+            if not intraday.empty:
+                intraday = intraday.dropna(subset=['Close'])
+                last_ts = intraday.index[-1]
+                if getattr(last_ts, "tzinfo", None) is not None:
+                    last_ts = last_ts.tz_convert("America/New_York")
+                last_day = pd.Timestamp(last_ts.date())
+                if last_day > df['Date'].max().normalize():
+                    day_bars = intraday[[ts.date() == last_ts.date() for ts in
+                                         (intraday.index.tz_convert("America/New_York")
+                                          if intraday.index.tz is not None else intraday.index)]]
+                    new_row = {
+                        'Date': last_day,
+                        'Open': float(day_bars['Open'].iloc[0]),
+                        'High': float(day_bars['High'].max()),
+                        'Low': float(day_bars['Low'].min()),
+                        'Close': float(day_bars['Close'].iloc[-1]),
+                    }
+                    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        except Exception:
+            pass  # 補不到就用日線原本的資料，不影響分析
+
         # 均線
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['MA60'] = df['Close'].rolling(window=60).mean()
